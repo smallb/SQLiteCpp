@@ -1,4 +1,4 @@
-@REM Copyright (c) 2012-2016 Sebastien Rombauts (sebastien.rombauts@gmail.com)
+@REM Copyright (c) 2012-2019 Sebastien Rombauts (sebastien.rombauts@gmail.com)
 @REM
 @REM Distributed under the MIT License (MIT) (See accompanying file LICENSE.txt
 @REM or copy at http://opensource.org/licenses/MIT)
@@ -17,9 +17,9 @@ if ERRORLEVEL 1 goto onError
 ctest --output-on-failure
 if ERRORLEVEL 1 goto onError
 
-cd ..
-exit
+goto onSuccess
 
 :onError
 @echo An error occured!
+:onSuccess
 cd ..

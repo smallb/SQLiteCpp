@@ -3,7 +3,7 @@
  * @ingroup tests
  * @brief   Test of a SQLiteCpp Database.
  *
- * Copyright (c) 2012-2016 Sebastien Rombauts (sebastien.rombauts@gmail.com)
+ * Copyright (c) 2012-2019 Sebastien Rombauts (sebastien.rombauts@gmail.com)
  *
  * Distributed under the MIT License (MIT) (See accompanying file LICENSE.txt
  * or copy at http://opensource.org/licenses/MIT)
@@ -29,14 +29,16 @@ void assertion_failed(const char* apFile, const long apLine, const char* apFunc,
 }
 #endif
 
-TEST(SQLiteCpp, version) {
+TEST(SQLiteCpp, version)
+{
     EXPECT_STREQ(SQLITE_VERSION,        SQLite::VERSION);
     EXPECT_EQ   (SQLITE_VERSION_NUMBER, SQLite::VERSION_NUMBER);
     EXPECT_STREQ(SQLITE_VERSION,        SQLite::getLibVersion());
     EXPECT_EQ   (SQLITE_VERSION_NUMBER, SQLite::getLibVersionNumber());
 }
 
-TEST(Database, ctorExecCreateDropExist) {
+TEST(Database, ctorExecCreateDropExist)
+{
     remove("test.db3");
     {
         // Try to open a non-existing database
@@ -54,7 +56,7 @@ TEST(Database, ctorExecCreateDropExist) {
         EXPECT_TRUE(db.tableExists("test"));
         EXPECT_TRUE(db.tableExists(std::string("test")));
         EXPECT_EQ(0, db.getLastInsertRowid());
-        
+
         EXPECT_EQ(0, db.exec("DROP TABLE IF EXISTS test"));
         EXPECT_FALSE(db.tableExists("test"));
         EXPECT_FALSE(db.tableExists(std::string("test")));
@@ -63,7 +65,33 @@ TEST(Database, ctorExecCreateDropExist) {
     remove("test.db3");
 }
 
-TEST(Database, createCloseReopen) {
+#if __cplusplus >= 201103L || (defined(_MSC_VER) && _MSC_VER >= 1600)
+
+SQLite::Database DatabaseBuilder(const char* apName)
+{
+    return SQLite::Database(apName, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+}
+
+TEST(Database, moveConstructor)
+{
+    remove("test.db3");
+    {
+        // Create a new database, using the move constructor
+        SQLite::Database db = DatabaseBuilder("test.db3");
+        EXPECT_FALSE(db.tableExists("test"));
+        EXPECT_TRUE(db.getHandle() != NULL);
+        SQLite::Database moved = std::move(db);
+        EXPECT_TRUE(db.getHandle() == NULL);
+        EXPECT_TRUE(moved.getHandle() != NULL);
+        EXPECT_FALSE(moved.tableExists("test"));
+    } // Close DB test.db3
+    remove("test.db3");
+}
+
+#endif
+
+TEST(Database, createCloseReopen)
+{
     remove("test.db3");
     {
         // Try to open the non-existing database
@@ -83,7 +111,8 @@ TEST(Database, createCloseReopen) {
     remove("test.db3");
 }
 
-TEST(Database, inMemory) {
+TEST(Database, inMemory)
+{
     {
         // Create a new database
         SQLite::Database db(":memory:", SQLite::OPEN_READWRITE);
@@ -101,8 +130,31 @@ TEST(Database, inMemory) {
     } // Close an destroy DB
 }
 
+TEST(Database, import_export)
+{
+    // Create a new in-memory database
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE);
+    EXPECT_FALSE(db.tableExists("test"));
+    db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
+    EXPECT_TRUE(db.tableExists("test"));
+
+    // Export the data into a file
+    remove("backup");
+    EXPECT_EQ(db.backup("backup", SQLite::Database::Save), SQLITE_OK);
+
+    // Trash the table
+    db.exec("DROP TABLE test;");
+    EXPECT_FALSE(db.tableExists("test"));
+
+    // Import the data back from the file
+    EXPECT_EQ(db.backup("backup", SQLite::Database::Load), SQLITE_OK);
+
+    EXPECT_TRUE(db.tableExists("test"));
+}
+
 #if SQLITE_VERSION_NUMBER >= 3007015 // SQLite v3.7.15 is first version with PRAGMA busy_timeout
-TEST(Database, busyTimeout) {
+TEST(Database, busyTimeout)
+{
     {
         // Create a new database with default timeout of 0ms
         SQLite::Database db(":memory:");
@@ -139,7 +191,8 @@ TEST(Database, busyTimeout) {
 }
 #endif // SQLITE_VERSION_NUMBER >= 3007015
 
-TEST(Database, exec) {
+TEST(Database, exec)
+{
     // Create a new database
     SQLite::Database db(":memory:", SQLite::OPEN_READWRITE);
 
@@ -200,7 +253,8 @@ TEST(Database, exec) {
 #endif
 }
 
-TEST(Database, execAndGet) {
+TEST(Database, execAndGet)
+{
     // Create a new database
     SQLite::Database db(":memory:", SQLite::OPEN_READWRITE);
 
@@ -218,7 +272,8 @@ TEST(Database, execAndGet) {
     EXPECT_EQ(3,            db.execAndGet("SELECT weight FROM test WHERE value=\"first\"").getInt());
 }
 
-TEST(Database, execException) {
+TEST(Database, execException)
+{
     // Create a new database
     SQLite::Database db(":memory:", SQLite::OPEN_READWRITE);
     EXPECT_EQ(SQLite::OK, db.getErrorCode());
@@ -260,7 +315,8 @@ TEST(Database, execException) {
 // TODO: test Database::loadExtension()
 
 #ifdef SQLITE_HAS_CODEC
-TEST(Database, encryptAndDecrypt) {
+TEST(Database, encryptAndDecrypt)
+{
     remove("test.db3");
     {
         // Try to open the non-existing database
@@ -304,7 +360,8 @@ TEST(Database, encryptAndDecrypt) {
     remove("test.db3");
 }
 #else // SQLITE_HAS_CODEC
-TEST(Database, encryptAndDecrypt) {
+TEST(Database, encryptAndDecrypt)
+{
     remove("test.db3");
     {
         // Try to open the non-existing database

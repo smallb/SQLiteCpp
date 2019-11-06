@@ -3,7 +3,7 @@
  * @ingroup tests
  * @brief   Test of a SQLiteCpp Statement.
  *
- * Copyright (c) 2012-2016 Sebastien Rombauts (sebastien.rombauts@gmail.com)
+ * Copyright (c) 2012-2019 Sebastien Rombauts (sebastien.rombauts@gmail.com)
  *
  * Distributed under the MIT License (MIT) (See accompanying file LICENSE.txt
  * or copy at http://opensource.org/licenses/MIT)
@@ -19,8 +19,10 @@
 #include <cstdio>
 #include <stdint.h>
 
+#include <climits> // For INT_MAX
 
-TEST(Statement, invalid) {
+TEST(Statement, invalid)
+{
     // Create a new database
     SQLite::Database db(":memory:", SQLite::OPEN_READWRITE|SQLite::OPEN_CREATE);
     EXPECT_EQ(SQLite::OK, db.getErrorCode());
@@ -39,7 +41,7 @@ TEST(Statement, invalid) {
     SQLite::Statement query(db, "SELECT * FROM test");
     EXPECT_STREQ("SELECT * FROM test", query.getQuery().c_str());
     EXPECT_EQ(2, query.getColumnCount ());
-    EXPECT_FALSE(query.isOk());
+    EXPECT_FALSE(query.hasRow());
     EXPECT_FALSE(query.isDone());
     EXPECT_EQ(SQLite::OK, query.getErrorCode());
     EXPECT_EQ(SQLite::OK, query.getExtendedErrorCode());
@@ -53,14 +55,14 @@ TEST(Statement, invalid) {
     EXPECT_THROW(query.getColumn(2), SQLite::Exception);
 
     query.reset();
-    EXPECT_FALSE(query.isOk());
+    EXPECT_FALSE(query.hasRow());
     EXPECT_FALSE(query.isDone());
 
     query.executeStep();
-    EXPECT_FALSE(query.isOk());
+    EXPECT_FALSE(query.hasRow());
     EXPECT_TRUE( query.isDone());
     query.reset();
-    EXPECT_FALSE(query.isOk());
+    EXPECT_FALSE(query.hasRow());
     EXPECT_FALSE(query.isDone());
 
     query.reset();
@@ -72,10 +74,10 @@ TEST(Statement, invalid) {
     EXPECT_THROW(query.bind(0), SQLite::Exception);
     EXPECT_EQ(SQLITE_RANGE, db.getErrorCode());
     EXPECT_EQ(SQLITE_RANGE, db.getExtendedErrorCode());
-    EXPECT_STREQ("bind or column index out of range", db.getErrorMsg());
+    EXPECT_STREQ("column index out of range", db.getErrorMsg());
     EXPECT_EQ(SQLITE_RANGE, query.getErrorCode());
     EXPECT_EQ(SQLITE_RANGE, query.getExtendedErrorCode());
-    EXPECT_STREQ("bind or column index out of range", query.getErrorMsg());
+    EXPECT_STREQ("column index out of range", query.getErrorMsg());
 
     query.exec(); // exec() instead of executeStep() as there is no result
     EXPECT_THROW(query.isColumnNull(0), SQLite::Exception);
@@ -89,13 +91,49 @@ TEST(Statement, invalid) {
     EXPECT_EQ(1, db.getTotalChanges());
 
     query.reset();
-    EXPECT_FALSE(query.isOk());
+    EXPECT_FALSE(query.hasRow());
     EXPECT_FALSE(query.isDone());
 
     EXPECT_THROW(query.exec(), SQLite::Exception); // exec() shall throw as it does not expect a result
 }
 
-TEST(Statement, executeStep) {
+#if __cplusplus >= 201103L || (defined(_MSC_VER) && _MSC_VER >= 1600)
+
+SQLite::Statement StatementBuilder(SQLite::Database& aDb, const char* apQuery)
+{
+    return SQLite::Statement(aDb, apQuery);
+}
+
+TEST(Statement, moveConstructor)
+{
+    // Create a new database
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    EXPECT_EQ(0, db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)"));
+    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (NULL, \"first\")"));
+    EXPECT_EQ(1, db.getLastInsertRowid());
+
+    SQLite::Statement query = StatementBuilder(db, "SELECT * FROM test");
+    EXPECT_FALSE(query.getQuery().empty());
+    EXPECT_FALSE(query.hasRow());
+    EXPECT_FALSE(query.isDone());
+    EXPECT_EQ(2, query.getColumnCount());
+    SQLite::Statement moved = std::move(query);
+    EXPECT_TRUE(query.getQuery().empty());
+    EXPECT_EQ(0, query.getColumnCount());
+    EXPECT_FALSE(moved.getQuery().empty());
+    EXPECT_EQ(2, moved.getColumnCount());
+    // Execute
+    moved.executeStep();
+    EXPECT_TRUE(moved.hasRow());
+    EXPECT_FALSE(moved.isDone());
+    EXPECT_FALSE(query.hasRow());
+    EXPECT_FALSE(query.isDone());
+}
+
+#endif
+
+TEST(Statement, executeStep)
+{
     // Create a new database
     SQLite::Database db(":memory:", SQLite::OPEN_READWRITE|SQLite::OPEN_CREATE);
     EXPECT_EQ(SQLite::OK, db.getErrorCode());
@@ -115,7 +153,7 @@ TEST(Statement, executeStep) {
 
     // Get the first row
     query.executeStep();
-    EXPECT_TRUE (query.isOk());
+    EXPECT_TRUE (query.hasRow());
     EXPECT_FALSE(query.isDone());
     const int64_t       id      = query.getColumn(0);
     const std::string   msg     = query.getColumn(1);
@@ -130,7 +168,7 @@ TEST(Statement, executeStep) {
 
     // Step one more time to discover there is nothing more
     query.executeStep();
-    EXPECT_FALSE(query.isOk());
+    EXPECT_FALSE(query.hasRow());
     EXPECT_TRUE (query.isDone()); // "done" is "the end"
 
     // Step after "the end" throw an exception
@@ -147,7 +185,54 @@ TEST(Statement, executeStep) {
     EXPECT_THROW(insert2.exec(), SQLite::Exception);
 }
 
-TEST(Statement, bindings) {
+TEST(Statement, tryExecuteStep)
+{
+    // Create a new database
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE|SQLite::OPEN_CREATE);
+    EXPECT_EQ(SQLite::OK, db.getErrorCode());
+
+    // Create a new table
+    EXPECT_EQ(0, db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, msg TEXT, int INTEGER, double REAL)"));
+    EXPECT_EQ(SQLite::OK, db.getErrorCode());
+
+    // Create a first row
+    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (NULL, \"first\", 123, 0.123)"));
+    EXPECT_EQ(1, db.getLastInsertRowid());
+
+    // Compile a SQL query
+    SQLite::Statement query(db, "SELECT * FROM test");
+    EXPECT_STREQ("SELECT * FROM test", query.getQuery().c_str());
+    EXPECT_EQ(4, query.getColumnCount());
+
+    // Get the first row
+    EXPECT_EQ(query.tryExecuteStep(), SQLITE_ROW);
+    EXPECT_TRUE (query.hasRow());
+    EXPECT_FALSE(query.isDone());
+    const int64_t       id      = query.getColumn(0);
+    const std::string   msg     = query.getColumn(1);
+    const int           integer = query.getColumn(2);
+    const long          integer2= query.getColumn(2);
+    const double        real    = query.getColumn(3);
+    EXPECT_EQ(1,        id);
+    EXPECT_EQ("first",  msg);
+    EXPECT_EQ(123,      integer);
+    EXPECT_EQ(123,      integer2);
+    EXPECT_EQ(0.123,    real);
+
+    // Step one more time to discover there is nothing more
+    EXPECT_EQ(query.tryExecuteStep(), SQLITE_DONE);
+    EXPECT_FALSE(query.hasRow());
+    EXPECT_TRUE (query.isDone()); // "done" is "the end"
+
+    // Try to insert a new row with the same PRIMARY KEY: "UNIQUE constraint failed: test.id"
+    SQLite::Statement insert(db, "INSERT INTO test VALUES (1, \"impossible\", 456, 0.456)");
+    EXPECT_EQ(insert.tryExecuteStep(), SQLITE_CONSTRAINT);
+    // in this case, reset() do throw again the same error
+    EXPECT_EQ(insert.tryReset(), SQLITE_CONSTRAINT);
+}
+
+TEST(Statement, bindings)
+{
     // Create a new database
     SQLite::Database db(":memory:", SQLite::OPEN_READWRITE|SQLite::OPEN_CREATE);
     EXPECT_EQ(SQLite::OK, db.getErrorCode());
@@ -172,12 +257,13 @@ TEST(Statement, bindings) {
         insert.bind(1, text);
         insert.bind(2, integer);
         insert.bind(3, dbl);
+        EXPECT_EQ(insert.getExpandedSQL(), "INSERT INTO test VALUES (NULL, 'first', -123, 0.123)");
         EXPECT_EQ(1, insert.exec());
         EXPECT_EQ(SQLITE_DONE, db.getErrorCode());
 
         // Check the result
         query.executeStep();
-        EXPECT_TRUE (query.isOk());
+        EXPECT_TRUE (query.hasRow());
         EXPECT_FALSE(query.isDone());
         EXPECT_EQ   (1,         query.getColumn(0).getInt64());
         EXPECT_STREQ("first",   query.getColumn(1).getText());
@@ -195,7 +281,7 @@ TEST(Statement, bindings) {
 
         // Check the result
         query.executeStep();
-        EXPECT_TRUE (query.isOk());
+        EXPECT_TRUE (query.hasRow());
         EXPECT_FALSE(query.isDone());
         EXPECT_EQ   (2,         query.getColumn(0).getInt64());
         EXPECT_STREQ("first",   query.getColumn(1).getText());
@@ -214,7 +300,7 @@ TEST(Statement, bindings) {
 
         // Check the resultw
         query.executeStep();
-        EXPECT_TRUE (query.isOk());
+        EXPECT_TRUE (query.hasRow());
         EXPECT_FALSE(query.isDone());
         EXPECT_EQ   (3,     query.getColumn(0).getInt64());
         EXPECT_TRUE (query.isColumnNull(1));
@@ -242,7 +328,7 @@ TEST(Statement, bindings) {
 
         // Check the result
         query.executeStep();
-        EXPECT_TRUE (query.isOk());
+        EXPECT_TRUE (query.hasRow());
         EXPECT_FALSE(query.isDone());
         EXPECT_EQ(4,                query.getColumn(0).getInt64());
         EXPECT_EQ(fourth,           query.getColumn(1).getText());
@@ -262,7 +348,7 @@ TEST(Statement, bindings) {
 
         // Check the result
         query.executeStep();
-        EXPECT_TRUE (query.isOk());
+        EXPECT_TRUE (query.hasRow());
         EXPECT_FALSE(query.isDone());
         EXPECT_EQ(5,                query.getColumn(0).getInt64());
         EXPECT_STREQ(buffer,        query.getColumn(1).getText());
@@ -275,23 +361,46 @@ TEST(Statement, bindings) {
     // reset() without clearbindings()
     insert.reset();
 
-    // Sixth row with uint32_t unsigned value
+    // Sixth row with uint32_t unsigned value and a long value (which is either a 32b int or a 64b long long)
     {
         const uint32_t  uint32 = 4294967295U;
+        const long      integer = -123;
         insert.bind(2, uint32);
+        insert.bind(3, integer);
         EXPECT_EQ(1, insert.exec());
         EXPECT_EQ(SQLITE_DONE, db.getErrorCode());
 
         // Check the result
         query.executeStep();
-        EXPECT_TRUE(query.isOk());
+        EXPECT_TRUE(query.hasRow());
         EXPECT_FALSE(query.isDone());
         EXPECT_EQ(6, query.getColumn(0).getInt64());
         EXPECT_EQ(4294967295U, query.getColumn(2).getUInt());
+        EXPECT_EQ(-123, query.getColumn(3).getInt());
+    }
+
+
+    // reset() without clearbindings()
+    insert.reset();
+
+    // Seventh row using another variant of int64 type
+    {
+        const int64_t   int64 = 12345678900000LL;
+        insert.bind(2, int64);
+        EXPECT_EQ(1, insert.exec());
+        EXPECT_EQ(SQLITE_DONE, db.getErrorCode());
+
+        // Check the result
+        query.executeStep();
+        EXPECT_TRUE(query.hasRow());
+        EXPECT_FALSE(query.isDone());
+        EXPECT_EQ(7, query.getColumn(0).getInt64());
+        EXPECT_EQ(12345678900000LL, query.getColumn(2).getInt64());
     }
 }
 
-TEST(Statement, bindNoCopy) {
+TEST(Statement, bindNoCopy)
+{
     // Create a new database
     SQLite::Database db(":memory:", SQLite::OPEN_READWRITE|SQLite::OPEN_CREATE);
     EXPECT_EQ(SQLite::OK, db.getErrorCode());
@@ -321,7 +430,7 @@ TEST(Statement, bindNoCopy) {
 
         // Check the result
         query.executeStep();
-        EXPECT_TRUE(query.isOk());
+        EXPECT_TRUE(query.hasRow());
         EXPECT_FALSE(query.isDone());
         EXPECT_EQ(1, query.getColumn(0).getInt64());
         EXPECT_STREQ(txt1, query.getColumn(1).getText());
@@ -330,21 +439,23 @@ TEST(Statement, bindNoCopy) {
     }
 }
 
-TEST(Statement, bindByName) {
+TEST(Statement, bindByName)
+{
     // Create a new database
     SQLite::Database db(":memory:", SQLite::OPEN_READWRITE|SQLite::OPEN_CREATE);
     EXPECT_EQ(SQLite::OK, db.getErrorCode());
 
     // Create a new table
-    EXPECT_EQ(0, db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, msg TEXT, int INTEGER, double REAL)"));
+    EXPECT_EQ(0, db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, msg TEXT, int INTEGER, double REAL, long INTEGER)"));
     EXPECT_EQ(SQLite::OK, db.getErrorCode());
 
     // Insertion with bindable parameters
-    SQLite::Statement insert(db, "INSERT INTO test VALUES (NULL, @msg, @int, @double)");
+    SQLite::Statement insert(db, "INSERT INTO test VALUES (NULL, @msg, @int, @double, @long)");
 
     // First row with text/int/double
     insert.bind("@msg",      "first");
     insert.bind("@int",      123);
+    insert.bind("@long",      -123);
     insert.bind("@double",   0.123);
     EXPECT_EQ(1, insert.exec());
     EXPECT_EQ(SQLITE_DONE, db.getErrorCode());
@@ -352,16 +463,17 @@ TEST(Statement, bindByName) {
     // Compile a SQL query to check the result
     SQLite::Statement query(db, "SELECT * FROM test");
     EXPECT_STREQ("SELECT * FROM test", query.getQuery().c_str());
-    EXPECT_EQ(4, query.getColumnCount());
+    EXPECT_EQ(5, query.getColumnCount());
 
     // Check the result
     query.executeStep();
-    EXPECT_TRUE (query.isOk());
+    EXPECT_TRUE (query.hasRow());
     EXPECT_FALSE(query.isDone());
     EXPECT_EQ   (1,         query.getColumn(0).getInt64());
     EXPECT_STREQ("first",   query.getColumn(1).getText());
     EXPECT_EQ   (123,       query.getColumn(2).getInt());
     EXPECT_EQ   (0.123,     query.getColumn(3).getDouble());
+    EXPECT_EQ   (-123,      query.getColumn(4).getInt());
 
     // reset() with clearbindings() and new bindings
     insert.reset();
@@ -371,21 +483,24 @@ TEST(Statement, bindByName) {
     {
         const std::string   second("second");
         const long long     int64 = 12345678900000LL;
+        const long          integer = -123;
         const float         float32 = 0.234f;
         insert.bind("@msg",      second);
         insert.bind("@int",      int64);
         insert.bind("@double",   float32);
+        insert.bind("@long",     integer);
         EXPECT_EQ(1, insert.exec());
         EXPECT_EQ(SQLITE_DONE, db.getErrorCode());
 
         // Check the result
         query.executeStep();
-        EXPECT_TRUE (query.isOk());
+        EXPECT_TRUE (query.hasRow());
         EXPECT_FALSE(query.isDone());
         EXPECT_EQ(2,                query.getColumn(0).getInt64());
         EXPECT_EQ(second,           query.getColumn(1).getText());
         EXPECT_EQ(12345678900000LL, query.getColumn(2).getInt64());
         EXPECT_EQ(0.234f,           query.getColumn(3).getDouble());
+        EXPECT_EQ(-123,             query.getColumn(4).getInt());
     }
 
     // reset() without clearbindings()
@@ -400,7 +515,7 @@ TEST(Statement, bindByName) {
 
         // Check the result
         query.executeStep();
-        EXPECT_TRUE (query.isOk());
+        EXPECT_TRUE (query.hasRow());
         EXPECT_FALSE(query.isDone());
         EXPECT_EQ(3,                query.getColumn(0).getInt64());
         EXPECT_STREQ(buffer,        query.getColumn(1).getText());
@@ -412,23 +527,27 @@ TEST(Statement, bindByName) {
     // reset() without clearbindings()
     insert.reset();
 
-    // Fourth row with uint32_t unsigned value
+    // Fourth row with uint32_t unsigned value and int64_t 64bits value
     {
         const uint32_t  uint32 = 4294967295U;
+        const int64_t   int64 = 12345678900000LL;
         insert.bind("@int", uint32);
+        insert.bind("@long", int64);
         EXPECT_EQ(1, insert.exec());
         EXPECT_EQ(SQLITE_DONE, db.getErrorCode());
 
         // Check the result
         query.executeStep();
-        EXPECT_TRUE(query.isOk());
+        EXPECT_TRUE(query.hasRow());
         EXPECT_FALSE(query.isDone());
         EXPECT_EQ(4, query.getColumn(0).getInt64());
         EXPECT_EQ(4294967295U, query.getColumn(2).getUInt());
+        EXPECT_EQ(12345678900000LL, query.getColumn(4).getInt64());
     }
 }
 
-TEST(Statement, bindNoCopyByName) {
+TEST(Statement, bindNoCopyByName)
+{
     // Create a new database
     SQLite::Database db(":memory:", SQLite::OPEN_READWRITE|SQLite::OPEN_CREATE);
     EXPECT_EQ(SQLite::OK, db.getErrorCode());
@@ -458,7 +577,7 @@ TEST(Statement, bindNoCopyByName) {
 
         // Check the result
         query.executeStep();
-        EXPECT_TRUE(query.isOk());
+        EXPECT_TRUE(query.hasRow());
         EXPECT_FALSE(query.isDone());
         EXPECT_EQ(1, query.getColumn(0).getInt64());
         EXPECT_STREQ(txt1, query.getColumn(1).getText());
@@ -467,7 +586,8 @@ TEST(Statement, bindNoCopyByName) {
     }
 }
 
-TEST(Statement, isColumnNull) {
+TEST(Statement, isColumnNull)
+{
     // Create a new database
     SQLite::Database db(":memory:", SQLite::OPEN_READWRITE|SQLite::OPEN_CREATE);
     ASSERT_EQ(SQLite::OK, db.getErrorCode());
@@ -490,7 +610,7 @@ TEST(Statement, isColumnNull) {
 
     // Get the first non-null row
     query.executeStep();
-    EXPECT_TRUE (query.isOk());
+    EXPECT_TRUE (query.hasRow());
     EXPECT_FALSE(query.isDone());
     EXPECT_THROW(query.isColumnNull(-1), SQLite::Exception);
     EXPECT_EQ(false, query.isColumnNull(0));
@@ -500,7 +620,7 @@ TEST(Statement, isColumnNull) {
 
     // Get the second row with null text
     query.executeStep();
-    EXPECT_TRUE (query.isOk());
+    EXPECT_TRUE (query.hasRow());
     EXPECT_FALSE(query.isDone());
     EXPECT_THROW(query.isColumnNull(-1), SQLite::Exception);
     EXPECT_EQ(true, query.isColumnNull(0));
@@ -510,7 +630,7 @@ TEST(Statement, isColumnNull) {
 
     // Get the second row with null integer
     query.executeStep();
-    EXPECT_TRUE (query.isOk());
+    EXPECT_TRUE (query.hasRow());
     EXPECT_FALSE(query.isDone());
     EXPECT_THROW(query.isColumnNull(-1), SQLite::Exception);
     EXPECT_EQ(false, query.isColumnNull(0));
@@ -520,7 +640,7 @@ TEST(Statement, isColumnNull) {
 
     // Get the third row with null float
     query.executeStep();
-    EXPECT_TRUE (query.isOk());
+    EXPECT_TRUE (query.hasRow());
     EXPECT_FALSE(query.isDone());
     EXPECT_THROW(query.isColumnNull(-1), SQLite::Exception);
     EXPECT_EQ(false, query.isColumnNull(0));
@@ -529,7 +649,8 @@ TEST(Statement, isColumnNull) {
     EXPECT_THROW(query.isColumnNull(3), SQLite::Exception);
 }
 
-TEST(Statement, isColumnNullByName) {
+TEST(Statement, isColumnNullByName)
+{
     // Create a new database
     SQLite::Database db(":memory:", SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
     ASSERT_EQ(SQLITE_OK, db.getErrorCode());
@@ -552,7 +673,7 @@ TEST(Statement, isColumnNullByName) {
 
     // Get the first non-null row
     query.executeStep();
-    EXPECT_TRUE (query.isOk());
+    EXPECT_TRUE (query.hasRow());
     EXPECT_FALSE(query.isDone());
     EXPECT_THROW(query.isColumnNull(""), SQLite::Exception);
     EXPECT_EQ(false, query.isColumnNull("msg"));
@@ -562,7 +683,7 @@ TEST(Statement, isColumnNullByName) {
 
     // Get the second row with null text
     query.executeStep();
-    EXPECT_TRUE (query.isOk());
+    EXPECT_TRUE (query.hasRow());
     EXPECT_FALSE(query.isDone());
     EXPECT_THROW(query.isColumnNull(""), SQLite::Exception);
     EXPECT_EQ(true, query.isColumnNull("msg"));
@@ -572,7 +693,7 @@ TEST(Statement, isColumnNullByName) {
 
     // Get the second row with null integer
     query.executeStep();
-    EXPECT_TRUE (query.isOk());
+    EXPECT_TRUE (query.hasRow());
     EXPECT_FALSE(query.isDone());
     EXPECT_THROW(query.isColumnNull(""), SQLite::Exception);
     EXPECT_EQ(false, query.isColumnNull("msg"));
@@ -582,7 +703,7 @@ TEST(Statement, isColumnNullByName) {
 
     // Get the third row with null float
     query.executeStep();
-    EXPECT_TRUE (query.isOk());
+    EXPECT_TRUE (query.hasRow());
     EXPECT_FALSE(query.isDone());
     EXPECT_THROW(query.isColumnNull(""), SQLite::Exception);
     EXPECT_EQ(false, query.isColumnNull("msg"));
@@ -591,7 +712,8 @@ TEST(Statement, isColumnNullByName) {
     EXPECT_THROW(query.isColumnNull(3), SQLite::Exception);
 }
 
-TEST(Statement, getColumnByName) {
+TEST(Statement, getColumnByName)
+{
     // Create a new database
     SQLite::Database db(":memory:", SQLite::OPEN_READWRITE|SQLite::OPEN_CREATE);
     EXPECT_EQ(SQLite::OK, db.getErrorCode());
@@ -612,7 +734,7 @@ TEST(Statement, getColumnByName) {
     EXPECT_STREQ("SELECT * FROM test", query.getQuery().c_str());
     EXPECT_EQ(4, query.getColumnCount());
     query.executeStep();
-    EXPECT_TRUE (query.isOk());
+    EXPECT_TRUE (query.hasRow());
     EXPECT_FALSE(query.isDone());
 
     // Look for non-existing columns
@@ -627,7 +749,8 @@ TEST(Statement, getColumnByName) {
     EXPECT_EQ(0.123,    real);
 }
 
-TEST(Statement, getName) {
+TEST(Statement, getName)
+{
     // Create a new database
     SQLite::Database db(":memory:", SQLite::OPEN_READWRITE|SQLite::OPEN_CREATE);
     EXPECT_EQ(0, db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, msg TEXT)"));
@@ -653,7 +776,8 @@ TEST(Statement, getName) {
 }
 
 #if __cplusplus >= 201402L || (defined(_MSC_VER) && _MSC_VER >= 1900)
-TEST(Statement, getColumns) {
+TEST(Statement, getColumns)
+{
     struct GetRowTestStruct
     {
         int id;
@@ -689,7 +813,7 @@ TEST(Statement, getColumns) {
     EXPECT_STREQ("SELECT * FROM test", query.getQuery().c_str());
     EXPECT_EQ(4, query.getColumnCount());
     query.executeStep();
-    EXPECT_TRUE(query.isOk());
+    EXPECT_TRUE(query.hasRow());
     EXPECT_FALSE(query.isDone());
 
     // Get all columns
@@ -698,7 +822,7 @@ TEST(Statement, getColumns) {
     EXPECT_EQ("first", testStruct.msg);
     EXPECT_EQ(123, testStruct.integer);
     EXPECT_EQ(0.123, testStruct.real);
-    
+
     // Get only the first 2 columns
     auto testStruct2 = query.getColumns<GetRowTestStruct, 2>();
     EXPECT_EQ(1, testStruct2.id);
@@ -708,3 +832,33 @@ TEST(Statement, getColumns) {
 }
 #endif
 
+#if (LONG_MAX > INT_MAX) // sizeof(long)==8 means the data model of the system is LP64 (64bits Linux)
+TEST(Statement, bind64bitsLong)
+{
+    // Create a new database
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE|SQLite::OPEN_CREATE);
+    EXPECT_EQ(SQLite::OK, db.getErrorCode());
+    EXPECT_EQ(SQLite::OK, db.getExtendedErrorCode());
+
+    SQLite::Statement query(db, "SELECT ?");
+    query.bind(1, 4294967297L);
+    query.executeStep();
+    EXPECT_EQ(4294967297L, query.getColumn(0).getInt64());
+}
+#endif
+
+TEST(Statement, getBindParameterCount)
+{
+    // Create a new database
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    EXPECT_EQ(0, db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, msg TEXT)"));
+
+    SQLite::Statement query(db, "SELECT id, msg FROM test where id = ?");
+    EXPECT_EQ(1, query.getBindParameterCount());
+
+    SQLite::Statement query2(db, "SELECT id, msg FROM test where id = ? and msg = ?");
+    EXPECT_EQ(2, query2.getBindParameterCount());
+
+    SQLite::Statement query3(db, "SELECT id, msg FROM test");
+    EXPECT_EQ(0, query3.getBindParameterCount());
+}

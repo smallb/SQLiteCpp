@@ -3,7 +3,7 @@
  * @ingroup SQLiteCpp
  * @brief   Management of a SQLite Database Connection.
  *
- * Copyright (c) 2012-2016 Sebastien Rombauts (sebastien.rombauts@gmail.com)
+ * Copyright (c) 2012-2019 Sebastien Rombauts (sebastien.rombauts@gmail.com)
  *
  * Distributed under the MIT License (MIT) (See accompanying file LICENSE.txt
  * or copy at http://opensource.org/licenses/MIT)
@@ -11,14 +11,20 @@
 #pragma once
 
 #include <SQLiteCpp/Column.h>
+#include <SQLiteCpp/Utils.h>    // definition of nullptr for C++98/C++03 compilers
 
 #include <string.h>
 
 // Forward declarations to avoid inclusion of <sqlite3.h> in a header
 struct sqlite3;
 struct sqlite3_context;
+
+#ifndef SQLITE_USE_LEGACY_STRUCT // Since SQLITE 3.19 (used by default since SQLiteCpp 2.1.0)
+typedef struct sqlite3_value sqlite3_value;
+#else // Before SQLite 3.19 (legacy struct forward declaration can be activated with CMake SQLITECPP_LEGACY_STRUCT var)
 struct Mem;
 typedef struct Mem sqlite3_value;
+#endif
 
 
 namespace SQLite
@@ -90,7 +96,7 @@ public:
     Database(const char* apFilename,
              const int   aFlags         = SQLite::OPEN_READONLY,
              const int   aBusyTimeoutMs = 0,
-             const char* apVfs          = NULL);
+             const char* apVfs          = nullptr);
 
     /**
      * @brief Open the provided database UTF-8 filename.
@@ -114,6 +120,20 @@ public:
              const int          aBusyTimeoutMs  = 0,
              const std::string& aVfs            = "");
 
+#if __cplusplus >= 201103L || (defined(_MSC_VER) && _MSC_VER >= 1600)
+    /**
+     * @brief Move an SQLite database connection.
+     *
+     * @param[in] aDatabase Database to move
+     */
+    inline Database(Database&& aDatabase) noexcept :
+        mpSQLite(aDatabase.mpSQLite),
+        mFilename(std::move(aDatabase.mFilename))
+    {
+        aDatabase.mpSQLite = nullptr;
+    }
+#endif
+
     /**
      * @brief Close the SQLite database connection.
      *
@@ -122,7 +142,7 @@ public:
      *
      * @warning assert in case of error
      */
-    virtual ~Database() noexcept; // nothrow
+    ~Database();
 
     /**
      * @brief Set a busy handler that sleeps for a specified amount of time when a table is locked.
@@ -137,7 +157,7 @@ public:
      *
      * @throw SQLite::Exception in case of error
      */
-    void setBusyTimeout(const int aBusyTimeoutMs) noexcept; // nothrow
+    void setBusyTimeout(const int aBusyTimeoutMs);
 
     /**
      * @brief Shortcut to execute one or multiple statements without results.
@@ -293,7 +313,7 @@ public:
     }
 
     /**
-     * @brief Create or redefine a SQL function or aggregate in the sqlite database. 
+     * @brief Create or redefine a SQL function or aggregate in the sqlite database.
      *
      *  This is the equivalent of the sqlite3_create_function_v2 command.
      * @see http://www.sqlite.org/c3ref/create_function.html
@@ -304,10 +324,10 @@ public:
      * @param[in] aNbArg        Number of arguments in the function
      * @param[in] abDeterministic Optimize for deterministic functions (most are). A random number generator is not.
      * @param[in] apApp         Arbitrary pointer of user data, accessible with sqlite3_user_data().
-     * @param[in] apFunc        Pointer to a C-function to implement a scalar SQL function (apStep & apFinal NULL)
-     * @param[in] apStep        Pointer to a C-function to implement an aggregate SQL function (apFunc NULL)
-     * @param[in] apFinal       Pointer to a C-function to implement an aggregate SQL function (apFunc NULL)
-     * @param[in] apDestroy     If not NULL, then it is the destructor for the application data pointer.
+     * @param[in] apFunc        Pointer to a C-function to implement a scalar SQL function (apStep & apFinal nullptr)
+     * @param[in] apStep        Pointer to a C-function to implement an aggregate SQL function (apFunc nullptr)
+     * @param[in] apFinal       Pointer to a C-function to implement an aggregate SQL function (apFunc nullptr)
+     * @param[in] apDestroy     If not nullptr, then it is the destructor for the application data pointer.
      *
      * @throw SQLite::Exception in case of error
      */
@@ -321,7 +341,7 @@ public:
                         void      (*apDestroy)(void *));
 
     /**
-     * @brief Create or redefine a SQL function or aggregate in the sqlite database. 
+     * @brief Create or redefine a SQL function or aggregate in the sqlite database.
      *
      *  This is the equivalent of the sqlite3_create_function_v2 command.
      * @see http://www.sqlite.org/c3ref/create_function.html
@@ -332,10 +352,10 @@ public:
      * @param[in] aNbArg        Number of arguments in the function
      * @param[in] abDeterministic Optimize for deterministic functions (most are). A random number generator is not.
      * @param[in] apApp         Arbitrary pointer of user data, accessible with sqlite3_user_data().
-     * @param[in] apFunc        Pointer to a C-function to implement a scalar SQL function (apStep & apFinal NULL)
-     * @param[in] apStep        Pointer to a C-function to implement an aggregate SQL function (apFunc NULL)
-     * @param[in] apFinal       Pointer to a C-function to implement an aggregate SQL function (apFunc NULL)
-     * @param[in] apDestroy     If not NULL, then it is the destructor for the application data pointer.
+     * @param[in] apFunc        Pointer to a C-function to implement a scalar SQL function (apStep & apFinal nullptr)
+     * @param[in] apStep        Pointer to a C-function to implement an aggregate SQL function (apFunc nullptr)
+     * @param[in] apFinal       Pointer to a C-function to implement an aggregate SQL function (apFunc nullptr)
+     * @param[in] apDestroy     If not nullptr, then it is the destructor for the application data pointer.
      *
      * @throw SQLite::Exception in case of error
      */
@@ -353,7 +373,7 @@ public:
     }
 
     /**
-     * @brief Load a module into the current sqlite database instance. 
+     * @brief Load a module into the current sqlite database instance.
      *
      *  This is the equivalent of the sqlite3_load_extension call, but additionally enables
      *  module loading support prior to loading the requested module.
@@ -363,7 +383,7 @@ public:
      * @note UTF-8 text encoding assumed.
      *
      * @param[in] apExtensionName   Name of the shared library containing extension
-     * @param[in] apEntryPointName  Name of the entry point (NULL to let sqlite work it out)
+     * @param[in] apEntryPointName  Name of the entry point (nullptr to let sqlite work it out)
      *
      * @throw SQLite::Exception in case of error
      */
@@ -372,8 +392,8 @@ public:
     /**
     * @brief Set the key for the current sqlite database instance.
     *
-    *  This is the equivalent of the sqlite3_key call and should thus be called 
-    *  directly after opening the database. 
+    *  This is the equivalent of the sqlite3_key call and should thus be called
+    *  directly after opening the database.
     *  Open encrypted database -> call db.key("secret") -> database ready
     *
     * @param[in] aKey   Key to decode/encode the database
@@ -401,10 +421,10 @@ public:
     /**
     * @brief Test if a file contains an unencrypted database.
     *
-    *  This is a simple test that reads the first bytes of a database file and 
-    *  compares them to the standard header for unencrypted databases. If the 
-    *  header does not match the standard string, we assume that we have an 
-    *  encrypted file. 
+    *  This is a simple test that reads the first bytes of a database file and
+    *  compares them to the standard header for unencrypted databases. If the
+    *  header does not match the standard string, we assume that we have an
+    *  encrypted file.
     *
     * @param[in] aFilename path/uri to a file
     *
@@ -413,6 +433,22 @@ public:
     * @throw SQLite::Exception in case of error
     */
     static bool isUnencrypted(const std::string& aFilename);
+
+    /**
+     * @brief BackupType for the backup() method
+     */
+    enum BackupType { Save, Load };
+
+    /**
+     * @brief Load or save the database content.
+     *
+     * This function is used to load the contents of a database file on disk
+     * into the "main" database of open database connection, or to save the current
+     * contents of the database into a database file on disk.
+     *
+     * @return SQLITE_OK on success or an error code from SQLite.
+     */
+    int backup(const char* zFilename, BackupType type);
 
 private:
     /// @{ Database must be non-copyable
